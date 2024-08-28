@@ -10,13 +10,17 @@ pipeline {
 
         stage('Install Dependencies') {
             steps {
+                 dir('src'){
                 sh 'npm install'
+                 }
             }
         }
 
         stage('Run Tests') {
             steps {
+                dir('src'){
                 sh 'npm test'  // Make sure your tests generate a coverage report
+                }
             }
         }
 
