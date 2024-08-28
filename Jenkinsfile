@@ -13,7 +13,7 @@ node('sonar') {
      {
          sh "npm run test-report"
          sh "npm run test"
-    #    sh "npm run test-postman"    
+   
      }
  }
     stage('fix'){
