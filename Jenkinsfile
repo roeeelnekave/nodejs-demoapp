@@ -1,6 +1,4 @@
-i want to build on it egent call sonar agent useing this pipline how to do it?
-
-node("sonar") {
+node('sonar') {
   stage('SCM') {
     checkout scm
   }
