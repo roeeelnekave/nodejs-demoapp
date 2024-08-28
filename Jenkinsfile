@@ -8,6 +8,14 @@ node('sonar') {
          sh "npm install"
      }
  }
+  stage('test'){
+     dir('src')
+     {
+         sh "npm run test-report"
+         sh "npm run test"
+        sh "npm run lint"
+     }
+ }
   stage('SonarQube Analysis') {
     def scannerHome = tool 'SonarScanner';
     withSonarQubeEnv() {
