@@ -1,0 +1,16 @@
+ubuntu:
+  hosts:
+    13.82.102.158:
+      ansible_user: azureadmin
+      ansible_connection: ssh
+jenkins:
+  hosts:
+    13.82.102.121:
+      ansible_user: azureadmin
+      ansible_connection: ssh
+agent:
+  hosts:
+    40.71.47.217:
+      ansible_user: azureadmin
+      ansible_connection: ssh
+

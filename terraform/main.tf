@@ -24,12 +24,15 @@ resource "azurerm_subnet" "my_terraform_subnet" {
 }
 
 # Create public IPs
+# Create public IPs for each VM
 resource "azurerm_public_ip" "my_terraform_public_ip" {
-  name                = "myPublicIP"
+  count               = 3
+  name                = "myPublicIP-${count.index}"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   allocation_method   = "Dynamic"
 }
+
 
 # Create Network Security Group and rule
 resource "azurerm_network_security_group" "my_terraform_nsg" {
@@ -48,11 +51,58 @@ resource "azurerm_network_security_group" "my_terraform_nsg" {
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
+  security_rule {
+    name                       = "sonarqube01"
+    priority                   = 1002
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "9000"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+  security_rule {
+    name                       = "sonarqube1"
+    priority                   = 1003
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "9001"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+  security_rule {
+    name                       = "jenkins"
+    priority                   = 1004
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "8080"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+  security_rule {
+    name                       = "http"
+    priority                   = 1005
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
 }
 
 # Create network interface
+# Create network interfaces for each VM
+# Create network interfaces for each VM
 resource "azurerm_network_interface" "my_terraform_nic" {
-  name                = "myNIC"
+  count               = 3
+  name                = "myNIC-${count.index}"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
 
@@ -60,15 +110,19 @@ resource "azurerm_network_interface" "my_terraform_nic" {
     name                          = "my_nic_configuration"
     subnet_id                     = azurerm_subnet.my_terraform_subnet.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.my_terraform_public_ip.id
+    public_ip_address_id          = azurerm_public_ip.my_terraform_public_ip[count.index].id
   }
 }
 
-# Connect the security group to the network interface
+
+
+# Connect the security group to each network interface
 resource "azurerm_network_interface_security_group_association" "example" {
-  network_interface_id      = azurerm_network_interface.my_terraform_nic.id
+  count                    = 3
+  network_interface_id      = azurerm_network_interface.my_terraform_nic[count.index].id
   network_security_group_id = azurerm_network_security_group.my_terraform_nsg.id
 }
+
 
 # Generate random text for a unique storage account name
 resource "random_id" "random_id" {
@@ -91,14 +145,15 @@ resource "azurerm_storage_account" "my_storage_account" {
 
 # Create virtual machine
 resource "azurerm_linux_virtual_machine" "my_terraform_vm" {
-  name                  = "myVM"
+  count                 = 3
+  name                  = var.vm_names[count.index]  
   location              = azurerm_resource_group.rg.location
   resource_group_name   = azurerm_resource_group.rg.name
-  network_interface_ids = [azurerm_network_interface.my_terraform_nic.id]
-  size                  = "Standard_DS1_v2"
+  network_interface_ids = [azurerm_network_interface.my_terraform_nic[count.index].id]
+  size                  = "Standard_DC1ds_v3"
 
   os_disk {
-    name                 = "myOsDisk"
+    name                 = "${var.vm_names[count.index]}-os-disk"
     caching              = "ReadWrite"
     storage_account_type = "Premium_LRS"
   }
@@ -121,4 +176,8 @@ resource "azurerm_linux_virtual_machine" "my_terraform_vm" {
   boot_diagnostics {
     storage_account_uri = azurerm_storage_account.my_storage_account.primary_blob_endpoint
   }
+}
+
+output "private_key" {
+  value = azapi_resource_action.ssh_public_key_gen.output.privateKey
 }

@@ -8,3 +8,5 @@ myvalues.yaml
 secrets.sh
 .secrets
 myparams.json
+.terraform
+.terraform.*

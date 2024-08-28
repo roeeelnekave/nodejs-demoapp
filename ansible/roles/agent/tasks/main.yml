@@ -1,0 +1,42 @@
+# tasks file for agent
+
+- name: update cache
+  apt:
+    update_cache: yes
+
+- name: install java
+  apt:
+    name: openjdk-17-jdk
+    state: latest    
+
+- name: install git
+  apt:
+    name: git 
+    state: latest
+
+- name: Download NodeSource setup script
+  get_url:
+    url: https://deb.nodesource.com/setup_20.x
+    dest: /tmp/nodesource_setup.sh
+    mode: '0755'
+
+- name: Run NodeSource setup script
+  command: bash /tmp/nodesource_setup.sh
+  become: true
+
+- name: Update APT cache
+  apt:
+    update_cache: yes
+
+- name: Install Node.js
+  apt:
+    name: nodejs
+    state: present
+
+- name: Verify Node.js installation
+  command: node -v
+  register: node_version
+
+- name: Print Node.js version
+  debug:
+    msg: "Node.js version is {{ node_version.stdout }}"

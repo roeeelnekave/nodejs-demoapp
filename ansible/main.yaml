@@ -1,0 +1,23 @@
+- name: SonarQube Setup Playbook
+  hosts: ubuntu
+  gather_facts: true
+  become: true
+  vars_files:
+    - ./roles/sonarqube_setup/vars/main.yml
+  roles:
+    - sonarqube_setup
+  handlers:
+    - import_tasks: ./roles/sonarqube_setup/handlers/main.yml
+- hosts: jenkins 
+  become: true
+  tasks: 
+    - name: install jenkins
+      include_role:
+        name: jenkins
+
+- hosts: agent
+  become: true
+  tasks: 
+    - name: install jenkins-agent dependency
+      include_role:
+        name: agent

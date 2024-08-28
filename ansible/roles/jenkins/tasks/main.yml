@@ -1,0 +1,37 @@
+---
+# tasks file for jenkins
+- name: update cache
+  apt:
+   update_cache: yes
+
+- name: install java
+  apt:
+   name: openjdk-17-jdk
+   state: latest    
+
+- name: Download Jenkins keyring
+  ansible.builtin.get_url:
+    url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+    dest: /usr/share/keyrings/jenkins-keyring.asc
+
+- name: Add Jenkins repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
+    filename: jenkins
+    state: present
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: Install Jenkins
+  ansible.builtin.apt:
+    name: jenkins
+    state: present
+
+- name: Fetch Jenkins initialAdminPassword
+  fetch:
+    src: /var/lib/jenkins/secrets/initialAdminPassword
+    dest: ./initialAdminPassword
+    flat: yes
+  
