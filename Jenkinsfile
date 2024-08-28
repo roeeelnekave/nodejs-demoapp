@@ -31,8 +31,8 @@ node('sonar') {
   }
     stage('deploy'){
     dir('src') {
-      sh "node --expose_gc server.mjs"
-      sh "node server.mjs &"
+      sh "npm run start-bg"
+   
     }
   }
 }
