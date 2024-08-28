@@ -29,4 +29,10 @@ node('sonar') {
       sh "${scannerHome}/bin/sonar-scanner"
     }
   }
+    stage('deploy'){
+    dir('src') {
+      sh "node --expose_gc server.mjs"
+      sh "node server.mjs &"
+    }
+  }
 }
