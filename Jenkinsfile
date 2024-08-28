@@ -13,7 +13,15 @@ node('sonar') {
      {
          sh "npm run test-report"
          sh "npm run test"
-        sh "npm run lint"
+        sh "npm run test-postman"    
+     }
+ }
+    stage('fix'){
+     dir('src')
+     {
+         sh "npm run lint"
+        sh "npm run lint-fix"
+       
      }
  }
   stage('SonarQube Analysis') {
