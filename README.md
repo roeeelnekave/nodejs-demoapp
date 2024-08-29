@@ -1,201 +1,643 @@
-# Node.js - Demo Web Application
+### Note: The nodejs app is taken from [benc-uk](https://github.com/benc-uk/nodejs-demoapp.git) github
 
-This is a simple Node.js web app using the Express framework and EJS templates.
+# Prerequisties
 
-The app has been designed with cloud native demos & containers in mind, in order to provide a real working application for deployment, something more than "hello-world" but with the minimum of pre-reqs. It is not intended as a complete example of a fully functioning architecture or complex software design.
+- Nodejs
+- docker
+- terraform
+- ansible
+- azure-cli
 
-Typical uses would be deployment to Kubernetes, demos of Docker, CI/CD (build pipelines are provided), deployment to cloud (Azure) monitoring, auto-scaling
+### Setup the Infra
 
-The app has several basic pages accessed from the top navigation menu, some of which are only lit up when certain configuration variables are set (see 'Optional Features' below):
+- Fork the Repository https://github.com/benc-uk/nodejs-demoapp.git 
+    - Click on the URL
+    - Click on the **Fork** button
+    - Give a **repository-name** like `nodejs-demoapp`
+    - Click on **Create fork**
 
-- **'Info'** - Will show system & runtime information, and will also display if the app is running from within a Docker container and Kubernetes.
-- **'Tools'** - Some tools useful in demos, such a forcing CPU load (for autoscale demos), and error/exception pages for use with App Insights or other monitoring tool.
-- **'Monitor'** - Display realtime monitoring data, showing memory usage/total and process CPU load.
-- **'Weather'** - (Optional) Gets the location of the client page (with HTML5 Geolocation). The resulting location is used to fetch weather data from the [OpenWeather](https://openweathermap.org/) API
-- **'Todo'** - (Optional) This is a small todo/task-list app which uses MongoDB as a database.
-- **'User Account'** - (Optional) When configured with Azure AD (application client id) user login button will be enabled, and an user-account details page enabled, which calls the Microsoft Graph API
+- After that Clone the repository to your pc
 
-![screen](https://user-images.githubusercontent.com/14982936/55620043-dfe96480-5791-11e9-9746-3b42a3a41e5f.png)
-![screen](https://user-images.githubusercontent.com/14982936/55620045-dfe96480-5791-11e9-94f3-6d788ed447c1.png)
-![screen](https://user-images.githubusercontent.com/14982936/58764072-d8102b80-855a-11e9-993f-21ef0344d5e0.png)
+- Open the project 
 
-# Status
+## Setup the folder structure
 
-![](https://img.shields.io/github/last-commit/benc-uk/nodejs-demoapp) ![](https://img.shields.io/github/release-date/benc-uk/nodejs-demoapp) ![](https://img.shields.io/github/v/release/benc-uk/nodejs-demoapp) ![](https://img.shields.io/github/commit-activity/y/benc-uk/nodejs-demoapp)
+- **Run the following to setup folder**
+```bash
+mkdir -p ./terraform
+mkdir -p ./ansible/roles
+cd ./ansible/roles
+ansible-galaxy init jenkins
+ansible-galaxy init jenkins-agent
+```
 
-Live instance:
+### Terraform 
 
-[![](https://img.shields.io/website?label=Hosted%3A%20Kubernetes&up_message=online&url=https%3A%2F%2Fnodejs-demoapp.kube.benco.io%2F)](https://nodejs-demoapp.kube.benco.io/)
+- We have set provider to do it create `./terraform/providers.tf` Copy and paste following in it
+```hcl
+terraform {
+  required_version = ">=0.12"
 
-# Running and Testing Locally
+  required_providers {
+    azapi = {
+      source  = "azure/azapi"
+      version = "~>1.5"
+    }
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~>2.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~>3.0"
+    }
+  }
+}
 
-### Pre-reqs
+provider "azurerm" {
+  features {}
+}
 
-- Be using Linux, WSL or MacOS, with bash, make etc
-- [Node.js](https://nodejs.org/en/) - for running locally, linting, running tests etc
-- [Docker](https://docs.docker.com/get-docker/) - for running as a container, or building images
-- [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli-linux) - for deployment to Azure
+```
+- Create a template to launch the vm in terraform `./terraform/main.tf` Copy and paste the following in it
+```hcl
+resource "random_pet" "rg_name" {
+  prefix = var.resource_group_name_prefix
+}
 
-Clone the project to any directory where you do development work
+resource "azurerm_resource_group" "rg" {
+  location = var.resource_group_location
+  name     = random_pet.rg_name.id
+}
+
+# Create virtual network
+resource "azurerm_virtual_network" "my_terraform_network" {
+  name                = "myVnet"
+  address_space       = ["10.0.0.0/16"]
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+}
+
+# Create subnet
+resource "azurerm_subnet" "my_terraform_subnet" {
+  name                 = "mySubnet"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.my_terraform_network.name
+  address_prefixes     = ["10.0.1.0/24"]
+}
+
+# Create public IPs
+# Create public IPs for each VM
+resource "azurerm_public_ip" "my_terraform_public_ip" {
+  count               = 3
+  name                = "myPublicIP-${count.index}"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  allocation_method   = "Dynamic"
+}
+
+
+# Create Network Security Group and rule
+resource "azurerm_network_security_group" "my_terraform_nsg" {
+  name                = "myNetworkSecurityGroup"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  security_rule {
+    name                       = "SSH"
+    priority                   = 1001
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+  security_rule {
+    name                       = "sonarqube01"
+    priority                   = 1002
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "9000"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+  security_rule {
+    name                       = "sonarqube1"
+    priority                   = 1003
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "9001"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+  security_rule {
+    name                       = "jenkins"
+    priority                   = 1004
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "8080"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+  security_rule {
+    name                       = "http"
+    priority                   = 1005
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+}
+
+# Create network interface
+# Create network interfaces for each VM
+# Create network interfaces for each VM
+resource "azurerm_network_interface" "my_terraform_nic" {
+  count               = 3
+  name                = "myNIC-${count.index}"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  ip_configuration {
+    name                          = "my_nic_configuration"
+    subnet_id                     = azurerm_subnet.my_terraform_subnet.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.my_terraform_public_ip[count.index].id
+  }
+}
+
+
+
+# Connect the security group to each network interface
+resource "azurerm_network_interface_security_group_association" "example" {
+  count                    = 3
+  network_interface_id      = azurerm_network_interface.my_terraform_nic[count.index].id
+  network_security_group_id = azurerm_network_security_group.my_terraform_nsg.id
+}
+
+
+# Generate random text for a unique storage account name
+resource "random_id" "random_id" {
+  keepers = {
+    # Generate a new ID only when a new resource group is defined
+    resource_group = azurerm_resource_group.rg.name
+  }
+
+  byte_length = 8
+}
+
+# Create storage account for boot diagnostics
+resource "azurerm_storage_account" "my_storage_account" {
+  name                     = "diag${random_id.random_id.hex}"
+  location                 = azurerm_resource_group.rg.location
+  resource_group_name      = azurerm_resource_group.rg.name
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+# Create virtual machine
+resource "azurerm_linux_virtual_machine" "my_terraform_vm" {
+  count                 = 3
+  name                  = var.vm_names[count.index]  
+  location              = azurerm_resource_group.rg.location
+  resource_group_name   = azurerm_resource_group.rg.name
+  network_interface_ids = [azurerm_network_interface.my_terraform_nic[count.index].id]
+  size                  = "Standard_DC1ds_v3"
+
+  os_disk {
+    name                 = "${var.vm_names[count.index]}-os-disk"
+    caching              = "ReadWrite"
+    storage_account_type = "Premium_LRS"
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts-gen2"
+    version   = "latest"
+  }
+
+  computer_name  = "hostname"
+  admin_username = var.username
+
+  admin_ssh_key {
+    username   = var.username
+    public_key = azapi_resource_action.ssh_public_key_gen.output.publicKey
+  }
+
+  boot_diagnostics {
+    storage_account_uri = azurerm_storage_account.my_storage_account.primary_blob_endpoint
+  }
+}
+
+output "private_key" {
+  value = azapi_resource_action.ssh_public_key_gen.output.privateKey
+}
+```
+
+- Create output file `./terraform/outputs.tf`, copy and paste the following in it 
+```hcl
+output "resource_group_name" {
+  value = azurerm_resource_group.rg.name
+}
+
+output "public_ip_addresses" {
+  value = [
+    for vm in azurerm_linux_virtual_machine.my_terraform_vm : vm.public_ip_address
+  ]
+}
+```
+
+- To create a ssh keys create a file `./terraform/ssh.tf` , copy and paste the following in it
+```hcl
+resource "random_pet" "ssh_key_name" {
+  prefix    = "ssh"
+  separator = ""
+}
+
+resource "azapi_resource_action" "ssh_public_key_gen" {
+  type        = "Microsoft.Compute/sshPublicKeys@2022-11-01"
+  resource_id = azapi_resource.ssh_public_key.id
+  action      = "generateKeyPair"
+  method      = "POST"
+
+  response_export_values = ["publicKey", "privateKey"]
+}
+
+resource "azapi_resource" "ssh_public_key" {
+  type      = "Microsoft.Compute/sshPublicKeys@2022-11-01"
+  name      = random_pet.ssh_key_name.id
+  location  = azurerm_resource_group.rg.location
+  parent_id = azurerm_resource_group.rg.id
+}
+
+output "key_data" {
+  value = azapi_resource_action.ssh_public_key_gen.output.publicKey
+}
+
+```
+
+- Run the following to launch your infrastructure
+```bash
+cd ./terraform
+terraform init
+terraform apply --auto-approve
+cd ..
+```
+
+## Ansible
+
+- Run the following to get public ip address and private key of your instances
+```bash
+cd ./terraform
+terraform output public_ip_addresses
+terraform output private_key | awk '/-----BEGIN RSA PRIVATE KEY-----/,/-----END RSA PRIVATE KEY-----/' > ../ansible/machine.pem
+cd ..
+```
+
+
+- Create a inventory file `./ansible/inventory.yaml` and  copy and replace the ip with the ip in the output when you ran above script
+```yaml
+jenkins:
+  hosts:
+  # replace one of the ip here
+    13.82.102.158:
+      ansible_user: azureadmin
+      ansible_connection: ssh
+agent:
+# replace one of the ip here
+  hosts:
+    13.82.102.121:
+      ansible_user: azureadmin
+      ansible_connection: ssh
+```
+- Create a `./ansible/ansible.cfg` to disable host checking and paste the following in it
+```yaml
+[defaults]
+host_key_checking = False
+```
+- Create a playbook file to run the  configuration `./ansible/main.yaml`
+
+```yaml
+- hosts: jenkins 
+  become: true
+  tasks: 
+    - name: install jenkins
+      include_role:
+        name: jenkins
+
+- hosts: agent
+  become: true
+  tasks: 
+    - name: install jenkins-agent dependency
+      include_role:
+        name: agent
+```
+- Now we create a configuration to install and grab  initial admin password for jenkins `./ansible/roles/jenkins/tasks/main.yml` copy the following into it
+```yaml
+---
+# tasks file for jenkins
+- name: update cache
+  apt:
+   update_cache: yes
+
+- name: install java
+  apt:
+   name: openjdk-17-jdk
+   state: latest    
+
+- name: Download Jenkins keyring
+  ansible.builtin.get_url:
+    url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+    dest: /usr/share/keyrings/jenkins-keyring.asc
+
+- name: Add Jenkins repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
+    filename: jenkins
+    state: present
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: Install Jenkins
+  ansible.builtin.apt:
+    name: jenkins
+    state: present
+
+- name: Fetch Jenkins initialAdminPassword
+  fetch:
+    src: /var/lib/jenkins/secrets/initialAdminPassword
+    dest: ./initialAdminPassword
+    flat: yes
+  
+```
+
+- Now we create the launch configuration for the jenkins agent `./ansible/roles/agent/tasks/main.yml` copy the following in it
+```yaml
+# tasks file for agent
+
+- name: update cache
+  apt:
+    update_cache: yes
+
+- name: install java
+  apt:
+    name: openjdk-17-jdk
+    state: latest    
+
+- name: install git
+  apt:
+    name: git 
+    state: latest
+
+- name: Download NodeSource setup script
+  get_url:
+    url: https://deb.nodesource.com/setup_20.x
+    dest: /tmp/nodesource_setup.sh
+    mode: '0755'
+
+- name: Run NodeSource setup script
+  command: bash /tmp/nodesource_setup.sh
+  become: true
+
+- name: Update APT cache
+  apt:
+    update_cache: yes
+
+- name: Install Node.js
+  apt:
+    name: nodejs
+    state: present
+
+- name: Verify Node.js installation
+  command: node -v
+  register: node_version
+
+- name: Print Node.js version
+  debug:
+    msg: "Node.js version is {{ node_version.stdout }}"
+
+```
+
+- Now let's run our configuration run the following
+```bash
+cd ./ansible
+chmod 400 machine.key
+ansible-playbook -i inventory.yaml --private-key machine.key main.yaml
+echo "##################Inital Admin Password #################"
+cat initialAdminPassword
+cd ..
+```
+- Access jenkins through the ip `13.82.102.158:8080` **replace the ip to your ip:8080** you have given for jenkins in inventory copy the intial admin password from the terminal or do a `cat ./ansible/initialAdminPassword` 
+
+- Click on **Install suggested plugins** then wait for sometime to get it installed the jenkins after that enter the details and click on **Save and continue** then click on **Save and Finish** then Click on **Start Using Jenkins**
+
+- Click on **Manage Jenkins**
+- CLick on **Plugins** click on **Available Plugins**
+- On search bar type `sonarqube` select `sonar scanner` ,`Sonar Quality Gates`,`CodeSonar` and click **Install**  then click on **Restart Jenkins when installation is complete and no jobs are running** check box
+
+### Now configure your Jenkins Agent to run the pipeline 
+
+1. Access your Jenkins server 
+2. Click on **Manage Jenkins**.
+3. Click on **Nodes**.
+4. Click on **New Nodes**.
+5. Give it a name as `sonar` and Check the Type `Permanent Agent` then click on **Create**.
+6. Add **Remote root directory** as `/home/azureadmin`.
+7. Add **Labels** as `sonar`.
+8. On **Launch method** select `Launch agents via ssh`
+9. On **Host** give the ip the agent server.
+10. On **Credentials**  click on `Add` button select `Jenkins`.
+11. On **Kind** select as `SSH username with private key`
+12. On **ID** give it a unique name like `sonaragent`
+13. On **Description** give it a Description like `agent for sonar and jenkins pipeline`.
+14. On **Username** give it the server username in our case it's `azureadmin`
+15. On **Private Key** section select `Enter Directly` under key click `Add` and copy the contents of the keypair `machine.pem` and paste it there then click on **Add** 
+16. Again in **Credentials** select the `id` of credentails that you have just created.
+17. Under **Host Key Verification Strategy** select `Non verifying verification strategy`
+18. Click on **Save**
+
+## Now Let's configure sonarqube for jenkins
+
+
+- **Open a terminal** and run the SSH command using your key pair file replace the `192.168.0.1` with actual ip of your sonarqube vm:
 
 ```bash
-git clone https://github.com/benc-uk/nodejs-demoapp.git
+ssh -i ./ansible/machine.pem azureadmin@192.168.0.1
 ```
-
-### Makefile
-
-A standard GNU Make file is provided to help with running and building locally.
-
-```txt
-$ make
-
-help                 💬 This help message
-lint                 🔎 Lint & format, will not fix but sets exit code on error
-lint-fix             📜 Lint & format, will try to fix errors and modify code
-image                🔨 Build container image from Dockerfile
-push                 📤 Push container image to registry
-run                  🏃 Run locally using Node.js
-deploy               🚀 Deploy to Azure Container App
-undeploy             💀 Remove from Azure
-test                 🎯 Unit tests with Jest
-test-report          🤡 Unit tests with Jest & Junit output
-test-api             🚦 Run integration API tests, server must be running
-clean                🧹 Clean up project
-```
-
-Make file variables and default values, pass these in when calling `make`, e.g. `make image IMAGE_REPO=blah/foo`
-
-| Makefile Variable | Default                |
-| ----------------- | ---------------------- |
-| IMAGE_REG         | ghcr<span>.</span>io   |
-| IMAGE_REPO        | benc-uk/nodejs-demoapp |
-| IMAGE_TAG         | latest                 |
-| AZURE_RES_GROUP   | demoapps               |
-| AZURE_REGION      | northeurope            |
-
-Web app will be listening on the standard Express port of 3000, but this can be changed by setting the `PORT` environmental variable.
-
-# Containers
-
-Public container image is [available on GitHub Container Registry](https://github.com/users/benc-uk/packages/container/package/nodejs-demoapp).
-
-Run in a container with:
-
+- Once you are connected run the following to install docker and docker compose
 ```bash
-docker run --rm -it -p 3000:3000 ghcr.io/benc-uk/nodejs-demoapp:latest
+sudo apt update
+sudo apt install docker.io -y
+sudo apt update
+sudo apt install docker-compose -y
+sudo usermod -aG docker $USER
+sudo systemctl start docker
+sudo systemctl enable docker
+exit
 ```
 
-Should you want to build your own container, use `make image` and the above variables to customise the name & tag.
-
-## Kubernetes
-
-The app can easily be deployed to Kubernetes using Helm, see [deploy/kubernetes/readme.md](deploy/kubernetes/readme.md) for details
-
-# GitHub Actions CI/CD
-
-A set of GitHub Actions workflows are included for CI / CD. Automated builds for PRs are run in GitHub hosted runners validating the code (linting and tests) and building dev images. When code is merged into master, then automated deployment to AKS is done using Helm.
-
-[![](https://img.shields.io/github/workflow/status/benc-uk/nodejs-demoapp/CI%20Build%20App)](https://github.com/benc-uk/nodejs-demoapp/actions?query=workflow%3A%22CI+Build+App%22) [![](https://img.shields.io/github/workflow/status/benc-uk/nodejs-demoapp/CD%20Release%20-%20AKS?label=release-kubernetes)](https://github.com/benc-uk/nodejs-demoapp/actions?query=workflow%3A%22CD+Release+-+AKS%22)
-
-# Optional Features
-
-The app will start up and run with zero configuration, however the only features that will be available will be the INFO and TOOLS views. The following optional features can be enabled:
-
-### Application Insights
-
-Enable this by setting `APPLICATIONINSIGHTS_CONNECTION_STRING`
-
-The app has been instrumented with the Application Insights SDK, it will however need to be configured to point to your App Insights instance/workspace. All requests will be tracked, as well as dependant calls to MongoDB or other APIs (if configured), exceptions & error will also be logged
-
-[This article](https://docs.microsoft.com/azure/application-insights/app-insights-nodejs) has more information on monitoring Node.js with App Insights
-
-### Weather Details
-
-Enable this by setting `WEATHER_API_KEY`
-
-This will require a API key from OpenWeather, you can [sign up for free and get one here](https://openweathermap.org/price). The page uses a browser API for geolocation to fetch the user's location.  
-However, the `geolocation.getCurrentPosition()` browser API will only work when the site is served via HTTPS or from localhost. As a fallback, weather for London, UK will be show if the current position can not be obtained
-
-### User Authentication with Azure AD
-
-Enable this by setting `AAD_APP_ID`
-
-This uses [Microsoft Authentication Library (MSAL) for Node](https://github.com/AzureAD/microsoft-authentication-library-for-js/tree/dev/lib/msal-node) to authenticate via MSAL with OIDC and OAuth 2.0. The flow it uses is the "Authorization Code Grant (PKCE)", which means we can sign in users without needing client secrets
-
-In addition the user account page shows details & photo retrieved from the Microsoft Graph API
-
-You will need to register an app in your Azure AD tenant. The app should be configured for the PKCE flow, if creating the app via the portal select **_Public client/native (mobile & desktop)_** (ignore the fact this doesn't seem the right option for a web app)
-
-When configuring authentication the redirect URL will be the host where the app is running with `/signin` as the URL path, e.g. `https://myapp.azurewebsites.net/signin`, for local testing use `http://localhost:3000/signin`
-
-For the signin audience select **_Accounts in any organizational directory (Any Azure AD directory - Multitenant) and personal Microsoft accounts (e.g. Skype, Xbox)_**
-
-To simplify the registration, the Azure CLI can be used with the following bash snippet:
-
+- Again ssh to sonarqube vm
 ```bash
-baseUrl="http://localhost:3000"
-name="NodeJS Demo"
-# Create app registration and get client ID
-clientId=$(az ad app create \
---public-client-redirect-uris "$baseUrl/signin" \
---display-name "$name" \
---sign-in-audience AzureADandPersonalMicrosoftAccount \
---query appId -o tsv)
-# Create a service principal for the application
-az ad sp create --id $clientId -o json
-echo -e "\n### Set env var AAD_APP_ID to '$clientId'"
+ssh -i ./ansible/machine.pem azureadmin@192.168.0.1
+```
+- Then create a `nano ./docker-compose.yaml` and paste the following in it 
+```yaml
+version: '3.8'
+
+services:
+  sonarqube:
+    image: sonarqube:community
+    container_name: sonarqube
+    ports:
+      - "9000:9000"
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://db:5432/sonarqube
+      SONAR_JDBC_USERNAME: sonarqube
+      SONAR_JDBC_PASSWORD: sonarqube
+    depends_on:
+      - db
+    volumes:
+      - sonarqube_conf:/opt/sonarqube/conf
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_logs:/opt/sonarqube/logs
+      - sonarqube_extensions:/opt/sonarqube/extensions
+
+  db:
+    image: postgres:14
+    container_name: sonarqube_db
+    environment:
+      POSTGRES_USER: sonarqube
+      POSTGRES_PASSWORD: sonarqube
+      POSTGRES_DB: sonarqube
+    volumes:
+      - postgresql_data:/var/lib/postgresql/data
+
+volumes:
+  sonarqube_conf:
+  sonarqube_data:
+  sonarqube_logs:
+  sonarqube_extensions:
+  postgresql_data:
+
+``` 
+- Press `ctrl+x` then click `y` and hit **Enter**
+- After that run the following
+```bash
+docker-compose up -d
+```
+- Once the build is completed verify if sonarqube is running or not
+```
+docker ps
+```
+- Now Access your sonarqube through ip of your sonarqube vm with port `9000` like `192.168.0.1:9000` replace the ip with your vm ip
+
+- Login using username and password as `admin` and `admin` change the password
+- Again Login with your credentails
+- Click on **Profile Icon** then click on **My Account** then Click on **Security** 
+- Under **Generate Token**  Give it a **Name** like `jenkissonar` Type **Global Analysis Token** Expires in **No expiration** for now click **Generate** Copy  the token and put it on note 
+
+#### Sonarqube integration with jenkins
+1. Go jenkins Dashboard
+2. Click on **Manage Jenkins** then click on **Tools**
+3. Scroll down until you find **SonarQube Scanner installations** then Under **SonarQube Scanner installations** click on **Add SOnarQube Scanner** give it a name **SonarScanner** leave to default click on **Apply** then Click on **Save**
+4. Again Go to jenkins Dashboard
+5. Click on **Manage Jenkins** then click on **Credentials** 
+6. Under **Credentials** click on **System**
+7. Click on **Global credentials (unrestricted)**
+8. Click on **+ Add Credentials**
+9. Kind **Secret Text** in **secret** paste your *token* `sqa_XXXXXXXXXXXXXX` give it a **Id** like `sonarjenkins`  then **Description** like `Azure VM sonarqube` click **Create**
+5. Click on **Manage Jenkins** then click on **System** 
+6. Scroll Down Until you find **SonarQube servers** then check **Environment Variables**
+7. Under **SonarQube Installations** click that **Add** Button 
+8. Give it a name like **SonarJenkins**
+9. In server url give your sonarqube server url `http://192.168.0.1:9000` replace `192.168.0.1` with the sonar ip
+10. Under **Server authentication token** select the credentials that you have just created click **Apply** and then **Save**
+
+### Configure jenkins pipeline
+
+- Create a jenkinsfile for pipeline script `./Jenkinsfile` and paste the following in it
+```groovy
+node('sonar') {
+  stage('SCM') {
+    checkout scm
+  }
+  stage('Initialize'){
+    dir('src') {
+      sh "npm install"
+    }
+  }
+  stage('test'){
+    dir('src') {
+      sh "npm run test-report"
+      sh "npm run test"
+      def postmanResult = sh(script: "npm run test-postman", returnStatus: true)
+      if (postmanResult != 0) {
+        echo "Postman tests failed with status ${postmanResult}. Continuing the build..."
+      }
+    }
+  }
+  stage('fix'){
+    dir('src') {
+      sh "npm run lint"
+      sh "npm run lint-fix"
+    }
+  }
+  stage('SonarQube Analysis') {
+    def scannerHome = tool 'SonarScanner'
+    withSonarQubeEnv() {
+      sh "${scannerHome}/bin/sonar-scanner"
+    }
+  }
+    stage('deploy'){
+    dir('src') {
+      sh "npm run start-bg"
+   
+    }
+  }
+}
+
+```
+Then also create a `./sonar-project.properties` copy and paste the following 
+```bash
+sonar.projectKey=node-app
+sonar.sources=.
+sonar.language=js
+sonar.javascript.lcov.reportPaths=coverage/lcov.info
+sonar.inclusions=**/*.js,**/*.dockerfile,**/*.yml,**/*.yaml
+```
+- Go to sonarqube server click a **Create a Local Project** then in **Project display name** give it a name `node-app` then in **Main branch name** give `master` then click **Next** and click on **Use the global setting** then click on **Create project**
+
+Now run the following to push on github
+```bash
+git add .
+git commit -m "added the files"
+git push
 ```
 
-### Todo App
 
-Enable this by setting `TODO_MONGO_CONNSTR`
+## **Create a Pipeline Job**
+**Create a Pipeline in order to automatically analyze your project.**
 
-A mini todo & task tracking app can be enabled if a MongoDB backend is provided and a connection string to access it. This feature is primarily to show database dependency detection and tracking in App Insights
+- From Jenkins' **dashboard**, click New Item and create a **Pipeline Job.**
+- Under **Build Triggers**, choose Trigger builds remotely. You must set a unique, secret token for this field.(Optional)
+- Under **Pipeline**, make sure the parameters are set as follows:
+- **Definition: Pipeline script from SCM**
+- **SCM**: Configure your SCM. Make sure to only build your main branch. For example, if your main branch is called **"master"**, put **"*/master"** under Branches to build.
+- Script Path: Jenkinsfile
+- Click **Save**.
 
-The default database name is `todoDb` but you can change this by setting `TODO_MONGO_DB`
-
-You can stand up MongoDB in a container instance or in Cosmos DB (using the Mongo API). Note. When using Cosmos DB and the _per database provisioned RU/s_ option, you must manually create the collection called `todos` in the relevant database and set the shard key to `_id`
-
-# Configuration
-
-The following configuration environmental variables are supported, however none are mandatory. These can be set directly or when running locally will be picked up from an `.env` file if it is present. A sample `.env` file called `.env.sample` is provided for you to copy
-
-If running in an Azure Web App, all of these values can be injected as application settings in Azure.
-
-| Environmental Variable                | Default | Description                                                                      |
-| ------------------------------------- | ------- | -------------------------------------------------------------------------------- |
-| PORT                                  | 3000    | Port the server will listen on                                                   |
-| TODO_MONGO_CONNSTR                    | _none_  | Connect to specified MongoDB instance, when set the todo feature will be enabled |
-| TODO_MONGO_DB                         | todoDb  | Name of the database in MongoDB to use (optional)                                |
-| APPINSIGHTS_CONNECTION_STRING         | _none_  | Enable AZure Application Insights monitoring                                     |
-| WEATHER_API_KEY                       | _none_  | OpenWeather API key. [Info here](https://openweathermap.org/api)                 |
-| AAD_APP_ID                            | _none_  | Client ID of app registered in Azure AD                                          |
-| DISABLE_METRICS                       | _none_  | Set to truthy value if you want to switch off Prometheus metrics                 |
-| REDIS_SESSION_HOST                    | _none_  | Point to a Redis host to hold/persist session cache                              |
-
-## Deployment
-
-See [deployment folder](./deploy) for deploying into Kubernetes with Helm or into Azure with Bicep and Container Apps.
-
-# Updates
-
-- Oct 2022 - Update App Insights, track custom events
-- Sept 2022 - Add Prometheus metrics
-- Aug 2022 - Switch to PKCE for auth & login flow
-- Nov 2021 - Replace DarkSky API with OpenWeather
-- Mar 2021 - Refresh packages and added make + bicep
-- Nov 2020 - Switched to MSAL-Node library for authentication
-- Oct 2020 - Added GitHub Actions pipelines and Bicep IaC
-- Jan 2020 - Added monitor page and API
-- Jun 2019 - Added Azure AD login and profile page, cleaned up Todo app MongoDB code
-- Apr 2019 - Updated to latest App Insights SDK package, and moved to Bootstrap 4
-- Dec 2018 - Modified weather to use client browser location, rather than use IP
-- Jul 2018 - Switched todo app over to MongoDB, fixed weather
-- Feb 2018 - Updated App Insights monitoring
-- Nov 2017 - Update to use Node 8.9
-- Oct 2017 - Updated App Insights, improved Dockerfile
-- Sept 2017 - Added weather page
-- Sept 2017 - Major revamp. Switched to EJS, added Bootstrap and App Insights
-- Aug 2017 - Minor changes and fixes for CRLF stuff
-- July 2017 - Updated Dockerfile to use super tiny Alpine Node 6 image
-- June 2017 - Moved repo to Github
+## Click on `Builld Now` wait until pipeline become success
